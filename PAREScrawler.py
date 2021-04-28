@@ -1,10 +1,12 @@
 
 from seleniumwire import webdriver
 from selenium.common.exceptions import StaleElementReferenceException
+from selenium.common.exceptions import NoSuchElementException 
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import Select
 from bs4 import BeautifulSoup
 import re
 import os
@@ -111,9 +113,23 @@ def Recurse(id_num,directory,driver,url,startyear,endyear,tree,completedids,idfi
         o.write(k+"\n")
         o.write(v+"\n")
     o.close()
+
+
+    #check if this entry has any contents:
+    if not "Contains:" in meta:
+        #this entry has no contents so continue
+        return
+    
     #now go into the listed contents of this node and
     #make a list of new ids to either recurse into or to compile into PDFs
     driver.get(url+"contiene/"+id_num)
+
+    #here, sort by date
+    select = Select(driver.find_element_by_id('orderBy'))
+    select.select_by_visible_text('Date')
+    wait = WebDriverWait(driver, 20)
+    #wait here for table to be opaque again:
+    wait.until(CheckAttributeValue((By.CLASS_NAME, "displayTable"), "style", "opacity: 1;"))
     soup=BeautifulSoup(driver.page_source,features="html.parser")
     
     #check if we are iterating over actual documents now
@@ -133,10 +149,16 @@ def Recurse(id_num,directory,driver,url,startyear,endyear,tree,completedids,idfi
     childdic = {}
     for t in tree.children:
         childdic[t.name] = t
+    childflag = False
+    if childdic:
+        childflag = True
+
+    #placeholder
+    maxpagenum = 1
     
-    while more:
+    while pagecount <= maxpagenum:
         pagecount+=1
-        more = False
+        #more = False
         links = soup.find_all("a")
         for a in links:
             if not a.has_attr('class') and a['href'].startswith("/ParesBusquedas20/catalogo/description/"):
@@ -148,7 +170,7 @@ def Recurse(id_num,directory,driver,url,startyear,endyear,tree,completedids,idfi
                     if not CheckYear(years,startyear,endyear):
                         continue
                 #if childnames are empty don't worry about it
-                if not childdic:
+                if not childflag:
                     newid = a['href'].split('/')[-1]
                     if not newid in completedids:
                         ids.append(newid)
@@ -166,7 +188,7 @@ def Recurse(id_num,directory,driver,url,startyear,endyear,tree,completedids,idfi
                                 ids.append(newid)
                                 idtrees.append(childdic[name])
                                 todel = name
-                                print("Found {0} in {1}".format(name,a.string))
+                                #print("Found {0} in {1}".format(name,a.string))
                                 #print("Appending: {0}".format(a['href'].split('/')[-1]))
                                 continue
                         #if not childdic:
@@ -175,10 +197,13 @@ def Recurse(id_num,directory,driver,url,startyear,endyear,tree,completedids,idfi
                         del childdic[todel]
                         if not childdic:
                             break
-            if a.has_attr('title')and a['title'] == "Go to page {0}".format(str(pagecount)):
-                more = True            
+            #if a.has_attr('title')and a['title'] == "Go to page {0}".format(str(pagecount)):
+            if a.string  == "»|":
+                latterhalf = a['href'].split('-p=')[1]
+                maxpagenum = int(latterhalf.split('&')[0])
+                #print("maxpagenum set to {0}".format(maxpagenum))
             #find next page button with selenium and click it
-        if more:
+        if pagecount <= maxpagenum:
             #print("But wait! There's more! Going to page {0}".format(pagecount))
             #nextpage = driver.find_element_by_link_text(str(pagecount))
             #print('nextpage')
@@ -188,6 +213,14 @@ def Recurse(id_num,directory,driver,url,startyear,endyear,tree,completedids,idfi
             while not success:
                 try:
                     wait = WebDriverWait(driver, 20)
+                    #check if this link really exists:
+                    #try:
+                    #    empty = driver.find_element(By.LINK_TEXT, str(pagecount))
+                    #except NoSuchElementException:
+                    #    print("No next page link found to page {0}.".format(str(pagecount)))
+                    #    more = False
+                    #    break
+                                              
                     nextpage = wait.until(EC.element_to_be_clickable((By.LINK_TEXT, str(pagecount))))
                     nextpage.click()
                 except StaleElementReferenceException:
@@ -200,6 +233,7 @@ def Recurse(id_num,directory,driver,url,startyear,endyear,tree,completedids,idfi
             wait = WebDriverWait(driver, 20)
             #wait here for table to be opaque again:
             wait.until(CheckAttributeValue((By.CLASS_NAME, "displayTable"), "style", "opacity: 1;"))
+            time.sleep(1)
             soup=BeautifulSoup(driver.page_source,features="html.parser")
 
     if childdic:
@@ -285,6 +319,9 @@ def Recurse(id_num,directory,driver,url,startyear,endyear,tree,completedids,idfi
                         dbcode = s.split("=")[1]
                 if not dbcode:
                     print("dbCode not set")
+                if pagnum > 1000:
+                    print("Skipping a really big file.")
+                    continue
                 for x in range(1,pagnum+1):
                     #TODO Figure out how to request this and save it appropriately
                     src = "http://pares.mcu.es/ParesBusquedas20/ViewImage.do?txt_id_imagen={0}&txt_zoom=10".format(str(x))
